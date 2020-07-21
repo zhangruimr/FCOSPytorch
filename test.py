@@ -1,9 +1,15 @@
 import torch as t
 import numpy as np
+import PIL.Image as Image
 from torchvision import transforms
+import random
 import numpy as np
 import cv2
+import os
+import shutil
+"""
 pic = cv2.imread("test.jpg")
+
 
 cv2.rectangle(pic,(100, 100), (200, 300), (255, 0, 0), 10)
 rot_matrix = cv2.getRotationMatrix2D((pic.shape[0]//2, pic.shape[1]//2), -58, 1)
@@ -21,5 +27,14 @@ cv2.circle(pic2, spot12, 4, (0, 255, 0), -1)
 cv2.circle(pic2, spot21, 4, (0, 255, 0), -1)
 cv2.circle(pic2, spot22, 4, (0, 255, 0), -1)
 cv2.rectangle(pic2,lt, rb, (0, 255, 0), 5)
-cv2.imshow("win", pic2)
+cv2.imshow("win", pic)
 cv2.waitKey(0)
+"""
+"""
+road = "D:\VOC2012\images"
+labels = "D:\VOC2012\labels"
+os.makedirs(os.path.join(road, "images"), exist_ok=True)
+filenames = os.listdir(labels)
+for filename in filenames:
+    shutil.copy(os.path.join(road, filename.split(".")[0]+".jpg"), os.path.join(road, "images", filename.split(".")[0]+".jpg"))
+"""
