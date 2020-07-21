@@ -7,6 +7,12 @@ import numpy as np
 import cv2
 import os
 import shutil
+x = t.Tensor([3, 4, 4, 4, 3, 5, 3, 5])
+c = t.argsort(x, descending=True).long()
+x = x.repeat((2,1)).t()
+f = t.Tensor([True, False])
+print(f.byte())
+print(x[c, :])
 """
 pic = cv2.imread("test.jpg")
 

@@ -147,7 +147,7 @@ class TrainDataset(Dataset):
         batch_labels = []
         for label in labels:
             shape = label.shape
-            boxes = t.zeros((maxNum, 5)) * -1
+            boxes = t.ones((maxNum, 5)) * -1
             boxes[0:shape[0], :] = label
             batch_labels.append(boxes)
         labels = t.stack(batch_labels, 0)
@@ -200,4 +200,4 @@ if __name__ == "__main__":
                cv2.rectangle(pic, (x1, y1), (x2, y2), (0, 255, 0), 4)
 
         cv2.imshow("win", pic)
-        cv2.waitKey(0)
+        cv2.waitKey(33)
