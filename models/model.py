@@ -1,7 +1,9 @@
 import torch as t
 import torch.nn as nn
 from subModels import *
-from loss import loss
+from datasets.myDataset import *
+import numpy as np
+from utils.functions import *
 #初始化模型参数
 
 #FCOS基本模块，训练测试分别进一步包装
@@ -20,9 +22,12 @@ class FCOS(nn.Module):
         out = self.backbone(inputs)
         out = self.fpn(out)
         out = self.detectHead(out)
+
         return out
-class genTarget():
+
+class generateTarget(nn.Module):
     def __init__(self, strides, limitRanges):
+        super(generateTarget, self).__init__()
         self.strides = strides
         self.limtRanges = limitRanges
     def forward(self, inputs, boxes):
@@ -30,137 +35,119 @@ class genTarget():
         fpn_cls_target = []
         fpn_cnt_target = []
         fpn_reg_target = []
+
+        new_cls = []
+        new_cnt = []
+        new_reg = []
         for i in range(len(cls)):
             layer_out = [cls[i], cnt[i], reg[i]]
             layer_target = generate_layer_target(layer_out, boxes, self.strides[i], self.limtRanges[i])
+
             fpn_cls_target.append(layer_target[0])
             fpn_cnt_target.append(layer_target[1])
             fpn_reg_target.append(layer_target[2])
 
-        return t.cat(fpn_cls_target, 1), t.cat(fpn_cnt_target, 1), t.cat(fpn_reg_target, 1)
-def boxes_sorted(box):
-    area = (box[:, 3] - box[:, 1]) * (box[:, 4] - box[:, 2])
-    index = t.argsort(area, descending=True)
-    return box[index, :]
-
-def generate_layer_target(layer_out, boxes, stride, limitRange):
-    cls, cnt, reg = layer_out
-    batch = cls.shape[0]
-    classNum = cls.shape[-1]
-    cls = cls.permute((0, 2, 3, 1)).contiguous().reshape((batch, -1, classNum))
-    cnt = cnt.permute((0, 2, 3, 1)).contiguous().reshape((batch, -1, 1))
-
-    grid = generate_grid(reg, stride)
-    reg = reg.permute((0, 2, 3, 1)).contiguous().reshape((batch, -1, 4))
-
-    all_cls = []
-    all_cnt = []
-    all_reg = []
-    for i in range(cls.shape[0]):
-        single_cls = cls[i]
-        single_cnt = cnt[i]
-        single_reg = reg[i]
-        box = boxes[i]
-        box = boxes_sorted(box[box[:, 0] != -1])
-        n, _ = box.shape
-        x = grid[:, 0]
-        y = grid[:, 1]
-        h_w = x.shape[0]
-        l_off = x[:, None].repeat((1, n)) - box[:, 1][None, :].repeat((h_w, 1))#(h*w, n) - (h*w, n) -> (h*w, n)
-        t_off = y[:, None].repeat((1, n)) - box[:, 2][None, :].repeat((h_w, 1))
-        r_off = box[:, 3][None, :].repeat((h_w, 1)) - x[:, None].repeat((1, n))
-        b_off = box[:, 4][None, :].repeat((h_w, 1)) - y[:, None].repeat((1, n))
-
-        off = t.stack((l_off, t_off, r_off, b_off), -1) #(h*w, n, 4)
-        off_min = t.min(off, -1)[0]#(h*w, n)
-        off_max = t.max(off, -1)[0]
-        mask_in_box = off_min > 0
-        mask_in_level = off_max > limitRange[0] & off_max <= limitRange[0]
-        mask = mask_in_box & mask_in_level
-        val, index = t.max(mask, -1)
-        pos = val > 0
-        cls_assign = box[index, 0].long()
-        reg_assign = box[index, 1:].float()
-
-        l_off = x - reg_assign[:, 1]
-        t_off = y - reg_assign[:, 2]
-        r_off = reg_assign[:, 3] - x
-        b_off = reg_assign[:, 4] - y
-        reg_target = t.stack((l_off, t_off, r_off, b_off))
-
-        centerness = t.sqrt((t.min(l_off, r_off) / t.clamp(t.max(l_off, r_off), min=1e-8)) * (t.min(t_off, b_off) / t.clamp(t.max(t_off, b_off), min=1e-8)))
-
-        cnt_target = centerness.reshape(-1,1)
-
-        cls_target = t.zeros(single_cls.shape).float()
-        if t.cuda.is_available():
-            cls_target = cls_target.cuda()
-        seq = t.arange(0, cls_target.shape[0]).long()
-        if t.cuda.is_available():
-            seq = seq.cuda()
-        cls_target[seq[pos], cls_assign[pos]] = 1
-        all_cls.append(cls_target)
-        all_cnt.append(cnt_target)
-        all_reg.append(reg_target)
-
-    return t.stack(all_cls, 0), t.stack(all_cnt, 0), t.stack(all_reg, 0)
-
-
-"""
-    _, n, c = boxes.shape
-    x = grid[:, 0]
-    y = grid[:, 1]
-
-    l_off = x[None, :, None].repeat((batch, 1, n)) - boxes[..., 0][:, None, :]
-    t_off = y[None, :, None].repeat((batch, 1, n)) - boxes[..., 1][:, None, :]
-    r_off = boxes[..., 2][:, None, :] - x[None, :, None].repeat((batch, 1, n))
-    b_off = boxes[..., 3][:, None, :] - y[None, :, None].repeat((batch, 1, n))
-
-    off = t.stack((l_off, t_off, r_off, b_off), -1)
-    off_min = t.min(off, -1)[0]
-    off_max = t.max(off, -1)[0]
-    mask_in_box = off_min > 0
-    mask_in_level = off_max > limitRange[0] & off_max <= limitRange[0]
-
-    area = (off[..., 0] + off[..., 2]) * (off[..., 1] + off[..., 3])
-    mask = mask_in_box & mask_in_level
-    pos = t.sum(mask.byte(), -1) > 0
-    neg = t.sum(mask.byte(), -1) == 0
-
-    cls_select = t.cat((cls[pos], cls[neg]), 0)
-    cnt_select = t.cat((cnt[pos], cnt[neg]), 0)
-    reg_select = t.cat((reg[pos], reg[neg]), 0)
-"""
-
-
-def generate_grid(feature, stride):
-    b, c, h, w = feature.shape
-    x = t.arange(0, w*stride, stride).float()
-    y = t.arange(0, h*stride, stride).float()
-    x, y = t.meshgrid(x, y)
-    x = x + stride // 2
-    y = y + stride // 2
-    grid = t.stack((x,y), -1).reshape((-1, 2))
-    if t.cuda.is_available():
-        grid = grid.cuda()
-    return grid
+            new_cls.append(layer_target[3])
+            new_cnt.append(layer_target[4])
+            new_reg.append(layer_target[5])
+        return t.cat(fpn_cls_target, 1), t.cat(fpn_cnt_target, 1), t.cat(fpn_reg_target, 1), t.cat(new_cls, 1), t.cat(new_cnt, 1), t.cat(new_reg, 1)
 
 class FcosTrainer(nn.Module):
-    def __init__(self, backbone = 101, classNum = 90):
+    def __init__(self, backbone = 101, weights=None, classNum = 20, strides=[8,16,32,64,128], limitRanges=[[-1,64],[64,128],[128,256],[256,512],[512,999999]]):
         super(FcosTrainer, self).__init__()
-        self.fcos = FCOS(backbone, classNum)
-
+        self.fcos = FCOS(backbone, weights=weights, classNum=classNum)
+        self.strides = strides
+        self.limitRanges = limitRanges
+        self.generateTargets = generateTarget(self.strides, self.limitRanges)
     def forward(self, inputs, boxes):
-         cls, cnt, reg = self.fcos(inputs)
+         outputs = self.fcos(inputs)
+         cls_label, cnt_label, reg_label, cls, cnt, reg = self.generateTargets(outputs, boxes)
 
+         outputs = [cls, cnt, reg]
+         targets = [cls_label, cnt_label, reg_label]
+         """
+         for i in range(len(targets)):
+             print("target", targets[i].shape)
+             print("feature", outputs[i].shape)
+         s"""
+         return outputs, targets
 
+class postProcessing(nn.Module):
+    def __init__(self, strides, limitRanges):
+        super(postProcessing, self).__init__()
+        self.strides = strides
+    def forward(self, inputs):
+        cls, cnt, reg = inputs
+        new_cls = []
+        new_cnt = []
+        new_reg = []
+        for i in range(len(cls)):
+            layer_out = [cls[i], cnt[i], reg[i]]
+            new_results = layer_post_processing(layer_out, self.strides[i])
+            #print(i, new_results[0].shape,new_results[1].shape,new_results[2].shape)
+            new_cls.append(new_results[0])
+            new_cnt.append(new_results[1])
+            new_reg.append(new_results[2])
+        cls = t.cat(new_cls, 1)
+        cnt = t.cat(new_cnt, 1)
+        reg = t.cat(new_reg, 1)
 
+        batch = cls.shape[0]
 
+        all_results = []
+        for i in range(batch):
+            cls_out = cls[i]
+            cnt_out = cnt[i]
+            reg_out = reg[i]
+            sscls_out = t.sqrt(cls_out * cnt_out)
+            score, kind = cls_out.max(-1)
 
+            mask = score > 0.05
 
+            cls_out = cls_out[mask]
+            cnt_out = cnt_out[mask]
+            reg_out = reg_out[mask]
+            score = score[mask]
+            kind = kind[mask].float()
 
+            #score = t.sqrt(score * cnt_out)
+            #print(reg_out.shape, kind.unsqueeze(-1).shape, score.unsqueeze(-1).shape)
+            result = t.cat((reg_out, kind.unsqueeze(-1), score.unsqueeze(-1)), -1)
+            objects = nms(result)
+            #if objects is not None:
+                #objects = clip_box(objects, self.size)
+            all_results.append(objects)
+        return all_results
+
+class FcosDetector(nn.Module):
+    def __init__(self, backbone=101, classNum=20, strides=[8, 16, 32, 64, 128], limitRanges=[[-1, 64], [64, 128], [128, 256], [256, 512], [512, 999999]]):
+        super(FcosDetector, self).__init__()
+        self.strides = strides
+        self.limitRanges = limitRanges
+
+        self.fcos = FCOS(backbone, classNum=classNum)
+        self.post_process = postProcessing(self.strides, self.limitRanges)
+
+    def forward(self, inputs):
+        outputs = self.fcos(inputs)
+        results = self.post_process(outputs)
+
+        return results
 if __name__ == "__main__":
-    pass
+    datasets = TrainDataset("/home/zr/VOC/VOC2012/images")
+    dataloader = DataLoader(datasets, batch_size=2, shuffle=True, collate_fn=datasets.collate_fn, drop_last=True)
+    #model = FcosTrainer()
+    model = FCOS()
+    model = model.cuda()
+
+    for imgs, labels ,roads in dataloader:
+        if t.cuda.is_available():
+            imgs = imgs.cuda()
+            labels = labels.cuda()
+        x = model(imgs)
+        #output, labels = model(imgs, labels)
+
+
 
 
 

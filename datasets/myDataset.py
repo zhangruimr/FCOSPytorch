@@ -35,7 +35,7 @@ def verticalFlip(img, boxes):
 
 def randomRotation(img, boxes):
     _h, _w, _ = img.shape
-    angle = int(random.uniform(-10, 10))
+    angle = int(random.uniform(-20, 20))
     #获得旋转变换矩阵
     rot_matrix = cv2.getRotationMatrix2D((_w // 2, _h // 2), angle, 1)
     #旋转图片
@@ -105,10 +105,12 @@ class augment():
         return img, boxes
 
 class TrainDataset(Dataset):
-    def __init__(self, trainDirs, size=(800, 1333),  colorJitter=True, horizentalFlip=True, verticalFlip=True, randomRotation=True):
+    def __init__(self, trainDirs, size=(800, 1312),  colorJitter=True, horizentalFlip=True, verticalFlip=False, randomRotation=True):
         self.trainDirs = trainDirs
         self.labelsDirs = trainDirs.replace("images", "labels")
+        #self.labelsDirs = trainDirs.replace("JPEGImages", "labels")
         filenames = os.listdir(self.trainDirs)
+        random.shuffle(filenames)
         self.imgsPath = [os.path.join(self.trainDirs, pic) for pic in filenames]
         self.labelsPath = [os.path.join(self.labelsDirs, label.replace("jpg", "txt").replace("png", "txt").replace("jpeg", "txt")) \
                            for label in filenames]
@@ -157,7 +159,29 @@ class TrainDataset(Dataset):
     def __len__(self):
         return len(self.imgsPath)
 
-def resize_pad(img, label = None, size=(800, 1333)):
+class DetectDataset(Dataset):
+    def __init__(self, trainDirs, size=(800, 1312)):
+        self.trainDirs = trainDirs
+        filenames = os.listdir(self.trainDirs)
+        self.imgsPath = [os.path.join(self.trainDirs, pic) for pic in filenames]
+        self.size = size
+    def __getitem__(self, item):
+        imgroad = self.imgsPath[item]
+        img = np.transpose(np.array(Image.open(imgroad)), (2, 0, 1))
+        img = np.ascontiguousarray(img[::-1, :, :])
+        img = t.from_numpy(img).float() / 255
+        #img = transforms.ToTensor()(img).float()
+        img = resize_pad(img, size=self.size)
+        _, h, w = img.shape
+        return img, imgroad
+    def collate_fn(self, batch):
+        imgs, roads = list(zip(*batch))
+        imgs = t.stack(imgs, 0)
+        return imgs, roads
+    def __len__(self):
+        return len(self.imgsPath)
+
+def resize_pad(img, label = None, size=(800, 1312)):
       c, h, w = img.shape
       stride = min(size[0] / h, size[1] / w)
       img = F.interpolate(img.unsqueeze(0), (round(h*stride), round(w*stride))).squeeze(0)
@@ -180,24 +204,26 @@ def resize_pad(img, label = None, size=(800, 1333)):
       else:
           print("数据集异常")
           exit()
-      return img, label
+
+      if label is not None:
+         return img, label
+      else:
+         return img
 
 
 #测试
 if __name__ == "__main__":
-    datasets = TrainDataset("D:\VOC2012\images")
+    datasets = TrainDataset("/home/zr/VOC/VOC2012/images")
     dataloader = DataLoader(datasets, batch_size=1, shuffle=False, collate_fn=datasets.collate_fn, drop_last=True)
-    for pic, label, road in dataloader:
+    for pic, labels, road in dataloader:
         #print(pic.shape, label.shape,road)
         pic = pic[0].permute((1,2,0)).contiguous().numpy()
-        label = label[0]
-        #print(label)
-
-        for box in label:
-            if box[0] != -1:
-               x1, y1, x2, y2 = int(box[1]), int(box[2]), int(box[3]), int(box[4])
-               print(x1,y1,x2,y2)
-               cv2.rectangle(pic, (x1, y1), (x2, y2), (0, 255, 0), 4)
+        labels = labels.numpy()[0]
+        for i in range(len(labels)):
+            box = labels[i, :]
+            print(box.shape)
+            x1, y1, x2, y2 = int(box[1]), int(box[2]), int(box[3]), int(box[4])
+            cv2.rectangle(pic, (x1,y1), (x2, y2), (255, 0, 0), 3)
 
         cv2.imshow("win", pic)
         cv2.waitKey(33)
