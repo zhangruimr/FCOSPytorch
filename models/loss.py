@@ -43,12 +43,14 @@ class BinaryCrossEntropy(nn.Module):
         loss = loss.sum() / pos_num
         return loss
 """
+#regLoss use IouLoss and CenternessLoss use BCE in paper
+"""
 class GiouLoss(nn.Module):
     def __init__(self):
         super(GiouLoss, self).__init__()
     def forward(self, preds, targets):
         pass
-
+"""
 
 class SmoothL1(nn.Module):
     def __init__(self):
